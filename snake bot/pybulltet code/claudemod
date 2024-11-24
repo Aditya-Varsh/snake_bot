@@ -1,0 +1,148 @@
+import pybullet as p
+import pybullet_data
+import time
+import math
+
+class SnakeSimulation:
+    def __init__(self):
+        # Simulation parameters
+        self.dt = 1.0 / 240.0
+        self.sphere_radius = 0.25
+        self.segment_length = self.sphere_radius * 2.0
+        self.num_segments = 36
+        
+        # Snake movement parameters
+        self.wave_length = 4.0
+        self.wave_period = 1.5
+        self.wave_amplitude = 0.4
+        self.wave_front = 0.0
+        self.steering = 0.0
+        
+        # Initialize PyBullet
+        p.connect(p.GUI)
+        p.setAdditionalSearchPath(pybullet_data.getDataPath())
+        p.setGravity(0, 0, -9.8)
+        p.setRealTimeSimulation(0)
+        
+        self.setup_environment()
+        self.create_snake()
+        
+    def setup_environment(self):
+        # Create ground plane
+        plane = p.createCollisionShape(p.GEOM_PLANE)
+        p.createMultiBody(0, plane)
+        
+        # Load and setup the main model
+        self.model = p.loadURDF("pybullet code/last.urdf", 
+                              basePosition=[0, 0, 0], 
+                              useFixedBase=True)
+        
+        # Apply texture if available
+        try:
+            texture_id = p.loadTexture("final.png")
+            p.changeVisualShape(self.model, -1, textureUniqueId=texture_id)
+        except:
+            print("Warning: Could not load texture file")
+            
+    def create_snake_segment(self):
+        return p.createCollisionShape(
+            p.GEOM_BOX,
+            halfExtents=[self.sphere_radius] * 3
+        )
+        
+    def create_snake(self):
+        # Initialize arrays for snake segments
+        link_masses = [1] * self.num_segments
+        collision_shape = self.create_snake_segment()
+        collision_shapes = [collision_shape] * self.num_segments
+        visual_shapes = [-1] * self.num_segments
+        link_positions = [[0, self.sphere_radius * 2.0 + 0.01, 0]] * self.num_segments
+        link_orientations = [[0, 0, 0, 1]] * self.num_segments
+        inertial_positions = [[0, 0, 0]] * self.num_segments
+        inertial_orientations = [[0, 0, 0, 1]] * self.num_segments
+        indices = list(range(self.num_segments))
+        joint_types = [p.JOINT_REVOLUTE] * self.num_segments
+        joint_axes = [[0, 0, 1]] * self.num_segments
+        
+        # Create snake multibody
+        self.snake = p.createMultiBody(
+            mass=1,
+            collisionShapeIndex=collision_shape,
+            visualShapeIndex=-1,
+            basePosition=[0, 0, 1],
+            baseOrientation=[0, 0, 0, 1],
+            linkMasses=link_masses,
+            linkCollisionShapeIndices=collision_shapes,
+            linkVisualShapeIndices=visual_shapes,
+            linkPositions=link_positions,
+            linkOrientations=link_orientations,
+            linkInertialFramePositions=inertial_positions,
+            linkInertialFrameOrientations=inertial_orientations,
+            linkParentIndices=indices,
+            linkJointTypes=joint_types,
+            linkJointAxis=joint_axes,
+            useMaximalCoordinates=True
+        )
+        
+        # Set friction properties
+        anisotropic_friction = [1, 0.01, 0.01]
+        p.changeDynamics(self.snake, -1, 
+                        lateralFriction=2, 
+                        anisotropicFriction=anisotropic_friction)
+        
+        for i in range(p.getNumJoints(self.snake)):
+            p.changeDynamics(self.snake, i, 
+                           lateralFriction=2, 
+                           anisotropicFriction=anisotropic_friction)
+    
+    def handle_keyboard(self):
+        keys = p.getKeyboardEvents()
+        for k, v in keys.items():
+            if k == p.B3G_RIGHT_ARROW:
+                self.steering = -0.2 if (v & p.KEY_WAS_TRIGGERED) else 0
+            elif k == p.B3G_LEFT_ARROW:
+                self.steering = 0.2 if (v & p.KEY_WAS_TRIGGERED) else 0
+    
+    def update_snake_motion(self):
+        scale_start = min(1.0, self.wave_front / (self.segment_length * 4.0))
+        
+        for joint in range(p.getNumJoints(self.snake)):
+            # Calculate phase for current segment
+            phase = (self.wave_front - (joint + 1) * self.segment_length) / self.wave_length
+            phase = (phase - math.floor(phase)) * math.pi * 2.0
+            
+            # Calculate target position with steering
+            target_pos = math.sin(phase) * scale_start * self.wave_amplitude
+            
+            # Apply steering effect
+            if self.steering > 0 and target_pos < 0:
+                target_pos *= 1.0 / (1.0 + self.steering)
+            elif self.steering < 0 and target_pos > 0:
+                target_pos *= 1.0 / (1.0 - self.steering)
+            
+            # Set joint motor
+            p.setJointMotorControl2(
+                self.snake,
+                joint,
+                p.POSITION_CONTROL,
+                targetPosition=target_pos + self.steering,
+                force=30
+            )
+        
+        # Update wave front
+        self.wave_front += self.dt / self.wave_period * self.wave_length
+    
+    def run(self):
+        try:
+            while True:
+                self.handle_keyboard()
+                self.update_snake_motion()
+                p.stepSimulation()
+                time.sleep(self.dt)
+        except KeyboardInterrupt:
+            p.disconnect()
+            print("\nSimulation ended by user")
+
+if __name__ == "__main__":
+    simulation = SnakeSimulation()
+    simulation.run()
